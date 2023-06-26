@@ -1,12 +1,35 @@
 const express = require('express');
+require('dotenv').config();
+require ('./config/passport')
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+var session = require('express-session')
+const User = require("./models/user.model")
+const saltRounds = 10;
 // const cookieSession = require("cookie-session");
 // const passportSetup = require("./passport");
-// const passport = require("passport");
+const passport = require("passport");
 const app = express();
+const MongoStore = require('connect-mongo');
+
+// Express session
+app.set('trust proxy', 1) // trust first proxy
+app.use(session({
+  secret: 'keyboard cat',
+  resave: false,
+  saveUninitialized: true,
+  store: MongoStore.create({
+    mongoUrl : process.env.MONGO_URL,
+    collectionName : 'sessions'
+  })
+  // cookie: { secure: true }
+}))
+app.use(passport.initialize())
+app.use(passport.session())
+
 const port = process.env.PORT || 5000;
 const secretKey = 'your_secret_key'; // Change this to your own secret key
 
@@ -16,24 +39,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors());
 
-
-// app.use(
-//   cookieSession({ name: "session", keys: ["lama"], maxAge: 24 * 60 * 60 * 100 })
-// );
-
-// app.use(passport.initialize());
-// app.use(passport.session());
-
-// app.use(
-//   cors({
-//     origin: "http://localhost:3000",
-//     methods: "GET,POST,PUT,DELETE",
-//     credentials: true,
-//   })
-// );
-
 // Connect to MongoDB using Mongoose
-mongoose.connect('mongodb+srv://TheFund:1234mamun@cluster0.seq8zxw.mongodb.net/?retryWrites=true&w=majority', {
+mongoose.connect(process.env.MONGO_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
@@ -44,38 +51,58 @@ mongoose.connect('mongodb+srv://TheFund:1234mamun@cluster0.seq8zxw.mongodb.net/?
     console.error('Error connecting to MongoDB:', error);
   });
 
-// Define a schema for the user model
-const userSchema = new mongoose.Schema({
-  title: String,
-  name: String,
-  lastName: String,
-  email: String,
-  number: String,
-  password: String,
-  country: String,
-
-});
-
-// Create a user model based on the schema
-const User = mongoose.model('User', userSchema);
-
 // Define the POST route for user registration
+
 app.post('/register', async (req, res) => {
   try {
-    const userData = req.body;
-    const newUser = new User(userData);
-    await newUser.save();
-    res.json({ message: 'User registered successfully' });
+    const saltRounds = 10;
+    bcrypt.hash(req.body.password, saltRounds, async (err, hash) => {
+      if (err) {
+        throw new Error('Error hashing password');
+      }
+
+      // Store hash in your password DB.
+      const userData = req.body;
+      const newUser = new User({
+        lastName: req.body.lastName,
+        password: hash
+      });
+
+      await newUser.save();
+      res.json({ message: 'User registered successfully' });
+    });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+
 // Define the POST route for user login
+// app.post('/login', async (req, res) => {
+//   try {
+//     const { email, password } = req.body;
+//     // Find the user by email
+//     const user = await User.findOne({ email });
+
+//     // If the user doesn't exist or the password is incorrect, return an error
+//     if (!user || user.password !== password) {
+//       res.status(401).json({ error: 'Invalid email or password' });
+//       return;
+//     }
+
+//     // Generate a JWT token
+//     const token = jwt.sign({ email: user.email }, secretKey, { expiresIn: '1h' });
+
+//     res.json({ token });
+//   } catch (error) {
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
+app.post('/login', passport.authenticate('local', { successRedirect: '/' }));
+
 app.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-
     // Find the user by email
     const user = await User.findOne({ email });
 
@@ -93,6 +120,19 @@ app.post('/login', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Google authentication routes
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['dashboard'] }));
+
+app.get('/auth/google/callback', 
+  passport.authenticate('google', { failureRedirect: '/login' }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect('/');
+  });
+
+
 
 // Middleware to verify the JWT for protected routes
 function authenticateToken(req, res, next) {
@@ -121,7 +161,7 @@ app.get('/protected', authenticateToken, (req, res) => {
 
 // Define the default route
 app.get('/', (req, res) => {
-  res.send('Running Server');
+  res.send('The FundedHub Running Server');
 });
 
 // Start the server
